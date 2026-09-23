@@ -78,7 +78,7 @@
       font-size: 14px;
     }
 
-    /* 한글 뜻 추천 박스 */
+    /* 사전 한글 뜻 추천 박스 */
     .recommend-box {
       position: absolute;
       top: 100%;
@@ -88,7 +88,7 @@
       border: 1px solid #3498db;
       border-radius: 6px;
       box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-      max-height: 150px;
+      max-height: 180px;
       overflow-y: auto;
       z-index: 100;
       list-style: none;
@@ -271,10 +271,10 @@
     <form id="word-form" onsubmit="handleFormSubmit(event)">
       <div class="input-group">
         <div class="input-wrapper">
-          <input type="text" id="eng-input" placeholder="영어 단어 (예: apple)" required autocomplete="off" oninput="handleEngInput(this.value)">
+          <input type="text" id="eng-input" placeholder="영어 단어 (예: accumulate)" required autocomplete="off" oninput="searchDictMeaning(this.value)">
         </div>
         <div class="input-wrapper">
-          <input type="text" id="kor-input" placeholder="한글 뜻 (자동 추천 선택 가능)" required autocomplete="off">
+          <input type="text" id="kor-input" placeholder="한글 뜻 (사과, 모으다 등)" required autocomplete="off">
           <ul id="recommend-box" class="recommend-box"></ul>
         </div>
       </div>
@@ -298,27 +298,37 @@
 </div>
 
 <script>
-  // 로컬스토리지에서 단어 불러오기
+  // 사전에 정의된 외부 단어 데이터셋 저장 변수
+  let dictionaryData = [];
+
+  // 내 단어장에 저장된 목록 (로컬스토리지)
   let words = (JSON.parse(localStorage.getItem('myWords')) || []).map(item => ({
     ...item,
     testedCount: item.testedCount || 0,
     correctCount: item.correctCount || 0
   }));
   
-  // 수정 모드 상태
   let editingId = null;
-
-  // 타이핑 지연 타이머 (연속 입력시 API 과호출 방지)
-  let searchTimer = null;
-
-  // 시험 진행용 변수
   let currentQuizList = [];
   let currentQuizIndex = 0;
 
-  // 초기 단어 목록 출력
-  renderWordList();
+  // 페이지가 로드될 때 words.json 파일 불러오기
+  window.addEventListener('DOMContentLoaded', () => {
+    loadDictionaryData();
+    renderWordList();
+  });
 
-  // 바깥 영역 클릭시 추천 박스 닫기
+  // words.json 불러오기 함수
+  async function loadDictionaryData() {
+    try {
+      const res = await fetch('words.json');
+      dictionaryData = await res.json();
+    } catch (err) {
+      console.log('words.json 파일을 불러오지 못했습니다. 동일한 폴더에 파일이 있는지 확인해주세요.');
+    }
+  }
+
+  // 바깥 클릭 시 추천 상자 닫기
   document.addEventListener('click', function(e) {
     const recommendBox = document.getElementById('recommend-box');
     const korInput = document.getElementById('kor-input');
@@ -327,64 +337,22 @@
     }
   });
 
-  // 영어 단어 입력 시 자동 뜻 검색 처리
-  function handleEngInput(val) {
-    clearTimeout(searchTimer);
+  // 내장 dictionaryData에서 영단어에 해당하는 실제 사전 뜻 찾기
+  function searchDictMeaning(englishWord) {
     const recommendBox = document.getElementById('recommend-box');
-    
-    if (!val.trim()) {
+    recommendBox.innerHTML = '';
+
+    const query = englishWord.trim().toLowerCase();
+    if (!query) {
       recommendBox.style.display = 'none';
       return;
     }
 
-    // 입력 후 0.4초 간 정지가 있을 때만 검색 진행
-    searchTimer = setTimeout(() => {
-      fetchKoreanMeanings(val.trim());
-    }, 400);
-  }
+    // 완전히 일치하는 단어 찾기
+    const matched = dictionaryData.find(item => item.eng.toLowerCase() === query);
 
-  // 외부 번역 API를 통해 한글 뜻 검색
-  async function fetchKoreanMeanings(englishWord) {
-    const recommendBox = document.getElementById('recommend-box');
-    recommendBox.innerHTML = '<li style="color:#888;">검색 중...</li>';
-    recommendBox.style.display = 'block';
-
-    try {
-      // MyMemory Free Translation API 활용
-      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(englishWord)}&langpair=en|ko`);
-      const data = await res.json();
-
-      recommendBox.innerHTML = '';
-
-      let meanings = [];
-
-      // 주 번역 결과
-      if (data.responseData && data.responseData.translatedText) {
-        meanings.push(data.responseData.translatedText.toLowerCase());
-      }
-
-      // 연관 매칭 번역 결과들 추출
-      if (data.matches && data.matches.length > 0) {
-        data.matches.forEach(m => {
-          if (m.translation) {
-            const cleanText = m.translation.trim().toLowerCase();
-            // 중복 및 비영어/이상문자 제외
-            if (!meanings.includes(cleanText) && cleanText !== englishWord.toLowerCase()) {
-              meanings.push(cleanText);
-            }
-          }
-        });
-      }
-
-      // 상위 5개 뜻만 표시
-      meanings = meanings.slice(0, 5);
-
-      if (meanings.length === 0) {
-        recommendBox.style.display = 'none';
-        return;
-      }
-
-      meanings.forEach(meaning => {
+    if (matched && matched.kor && matched.kor.length > 0) {
+      matched.kor.forEach(meaning => {
         const li = document.createElement('li');
         li.textContent = meaning;
         li.onclick = function() {
@@ -393,13 +361,13 @@
         };
         recommendBox.appendChild(li);
       });
-
-    } catch (err) {
+      recommendBox.style.display = 'block';
+    } else {
       recommendBox.style.display = 'none';
     }
   }
 
-  // 탭 전환 함수
+  // 탭 전환
   function switchTab(tabName) {
     document.getElementById('tab-manage').classList.remove('active');
     document.getElementById('tab-test').classList.remove('active');
@@ -417,7 +385,7 @@
     }
   }
 
-  // 폼 제출 처리 (추가 또는 수정)
+  // 폼 제출 (단어 추가 / 수정)
   function handleFormSubmit(e) {
     e.preventDefault();
     
@@ -430,7 +398,6 @@
     document.getElementById('recommend-box').style.display = 'none';
 
     if (editingId !== null) {
-      // 단어 수정 모드
       const isDuplicate = words.some(item => item.id !== editingId && item.english.toLowerCase() === english.toLowerCase());
       if (isDuplicate) {
         alert('이미 존재하는 다른 단어입니다.');
@@ -447,7 +414,6 @@
 
       cancelEdit();
     } else {
-      // 단어 추가 모드
       const isDuplicate = words.some(item => item.english.toLowerCase() === english.toLowerCase());
       if (isDuplicate) {
         alert('이미 추가된 단어입니다.');
@@ -472,7 +438,7 @@
     renderWordList();
   }
 
-  // 수정 버튼 클릭 시 실행되는 함수
+  // 수정 시작
   function startEdit(id) {
     const wordToEdit = words.find(item => item.id === id);
     if (!wordToEdit) return;
@@ -489,7 +455,7 @@
     document.getElementById('eng-input').focus();
   }
 
-  // 수정 취소 함수
+  // 수정 취소
   function cancelEdit() {
     editingId = null;
     document.getElementById('eng-input').value = '';
@@ -501,7 +467,7 @@
     document.getElementById('btn-cancel-edit').style.display = 'none';
   }
 
-  // 단어 삭제 함수
+  // 단어 삭제
   function deleteWord(id) {
     if (editingId === id) {
       cancelEdit();
@@ -511,12 +477,11 @@
     renderWordList();
   }
 
-  // 로컬스토리지 저장 함수
   function saveWords() {
     localStorage.setItem('myWords', JSON.stringify(words));
   }
 
-  // 단어 목록 화면에 출력
+  // 목록 출력
   function renderWordList() {
     const listElement = document.getElementById('word-list');
     listElement.innerHTML = '';
@@ -554,12 +519,11 @@
     });
   }
 
-  // HTML 태그 입력 방지
   function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // 시험 시작 준비
+  // 시험 시작
   function startTest() {
     const container = document.getElementById('test-container');
     
@@ -574,7 +538,7 @@
     showNextQuestion();
   }
 
-  // 문제 표시 함수
+  // 문제 표시
   function showNextQuestion() {
     const container = document.getElementById('test-container');
 
@@ -607,7 +571,7 @@
     document.getElementById('answer-input').focus();
   }
 
-  // 정답 확인 함수
+  // 정답 확인 및 정답률 누적
   function checkAnswer(e, wordId, correctAnswer) {
     e.preventDefault();
     const inputElement = document.getElementById('answer-input');
