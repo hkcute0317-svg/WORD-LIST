@@ -64,14 +64,52 @@
       display: flex;
       gap: 10px;
       margin-bottom: 15px;
+      position: relative;
     }
-    .input-group input {
+    .input-wrapper {
       flex: 1;
+      position: relative;
+    }
+    .input-wrapper input {
+      width: 100%;
       padding: 10px;
       border: 1px solid #ccc;
       border-radius: 6px;
       font-size: 14px;
     }
+
+    /* 한글 뜻 추천 박스 */
+    .recommend-box {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #3498db;
+      border-radius: 6px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      max-height: 150px;
+      overflow-y: auto;
+      z-index: 100;
+      list-style: none;
+      display: none;
+      margin-top: 4px;
+    }
+    .recommend-box li {
+      padding: 8px 12px;
+      cursor: pointer;
+      font-size: 13px;
+      border-bottom: 1px solid #eee;
+    }
+    .recommend-box li:last-child {
+      border-bottom: none;
+    }
+    .recommend-box li:hover {
+      background-color: #ebf5fb;
+      color: #2980b9;
+      font-weight: bold;
+    }
+
     .btn-group-form {
       display: flex;
       gap: 8px;
@@ -232,8 +270,13 @@
   <div id="tab-manage" class="tab-content active">
     <form id="word-form" onsubmit="handleFormSubmit(event)">
       <div class="input-group">
-        <input type="text" id="eng-input" placeholder="영어 단어 (예: apple)" required autocomplete="off">
-        <input type="text" id="kor-input" placeholder="한글 뜻 (예: 사과)" required autocomplete="off">
+        <div class="input-wrapper">
+          <input type="text" id="eng-input" placeholder="영어 단어 (예: apple)" required autocomplete="off" oninput="handleEngInput(this.value)">
+        </div>
+        <div class="input-wrapper">
+          <input type="text" id="kor-input" placeholder="한글 뜻 (자동 추천 선택 가능)" required autocomplete="off">
+          <ul id="recommend-box" class="recommend-box"></ul>
+        </div>
       </div>
       <div class="btn-group-form">
         <button type="submit" id="btn-submit-form" class="btn-submit-form">단어 추가하기</button>
@@ -255,7 +298,7 @@
 </div>
 
 <script>
-  // 로컬스토리지에서 단어 불러오기 (기존 데이터에 통계값이 없으면 0으로 초기화)
+  // 로컬스토리지에서 단어 불러오기
   let words = (JSON.parse(localStorage.getItem('myWords')) || []).map(item => ({
     ...item,
     testedCount: item.testedCount || 0,
@@ -265,12 +308,96 @@
   // 수정 모드 상태
   let editingId = null;
 
+  // 타이핑 지연 타이머 (연속 입력시 API 과호출 방지)
+  let searchTimer = null;
+
   // 시험 진행용 변수
   let currentQuizList = [];
   let currentQuizIndex = 0;
 
   // 초기 단어 목록 출력
   renderWordList();
+
+  // 바깥 영역 클릭시 추천 박스 닫기
+  document.addEventListener('click', function(e) {
+    const recommendBox = document.getElementById('recommend-box');
+    const korInput = document.getElementById('kor-input');
+    if (e.target !== recommendBox && e.target !== korInput) {
+      recommendBox.style.display = 'none';
+    }
+  });
+
+  // 영어 단어 입력 시 자동 뜻 검색 처리
+  function handleEngInput(val) {
+    clearTimeout(searchTimer);
+    const recommendBox = document.getElementById('recommend-box');
+    
+    if (!val.trim()) {
+      recommendBox.style.display = 'none';
+      return;
+    }
+
+    // 입력 후 0.4초 간 정지가 있을 때만 검색 진행
+    searchTimer = setTimeout(() => {
+      fetchKoreanMeanings(val.trim());
+    }, 400);
+  }
+
+  // 외부 번역 API를 통해 한글 뜻 검색
+  async function fetchKoreanMeanings(englishWord) {
+    const recommendBox = document.getElementById('recommend-box');
+    recommendBox.innerHTML = '<li style="color:#888;">검색 중...</li>';
+    recommendBox.style.display = 'block';
+
+    try {
+      // MyMemory Free Translation API 활용
+      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(englishWord)}&langpair=en|ko`);
+      const data = await res.json();
+
+      recommendBox.innerHTML = '';
+
+      let meanings = [];
+
+      // 주 번역 결과
+      if (data.responseData && data.responseData.translatedText) {
+        meanings.push(data.responseData.translatedText.toLowerCase());
+      }
+
+      // 연관 매칭 번역 결과들 추출
+      if (data.matches && data.matches.length > 0) {
+        data.matches.forEach(m => {
+          if (m.translation) {
+            const cleanText = m.translation.trim().toLowerCase();
+            // 중복 및 비영어/이상문자 제외
+            if (!meanings.includes(cleanText) && cleanText !== englishWord.toLowerCase()) {
+              meanings.push(cleanText);
+            }
+          }
+        });
+      }
+
+      // 상위 5개 뜻만 표시
+      meanings = meanings.slice(0, 5);
+
+      if (meanings.length === 0) {
+        recommendBox.style.display = 'none';
+        return;
+      }
+
+      meanings.forEach(meaning => {
+        const li = document.createElement('li');
+        li.textContent = meaning;
+        li.onclick = function() {
+          document.getElementById('kor-input').value = meaning;
+          recommendBox.style.display = 'none';
+        };
+        recommendBox.appendChild(li);
+      });
+
+    } catch (err) {
+      recommendBox.style.display = 'none';
+    }
+  }
 
   // 탭 전환 함수
   function switchTab(tabName) {
@@ -299,6 +426,8 @@
     
     const english = engInput.value.trim();
     const korean = korInput.value.trim();
+
+    document.getElementById('recommend-box').style.display = 'none';
 
     if (editingId !== null) {
       // 단어 수정 모드
@@ -365,6 +494,7 @@
     editingId = null;
     document.getElementById('eng-input').value = '';
     document.getElementById('kor-input').value = '';
+    document.getElementById('recommend-box').style.display = 'none';
     
     document.getElementById('btn-submit-form').textContent = '단어 추가하기';
     document.getElementById('btn-submit-form').style.backgroundColor = '#2ecc71';
@@ -386,7 +516,7 @@
     localStorage.setItem('myWords', JSON.stringify(words));
   }
 
-  // 단어 목록 화면에 출력 (정답률 표시 포함)
+  // 단어 목록 화면에 출력
   function renderWordList() {
     const listElement = document.getElementById('word-list');
     listElement.innerHTML = '';
@@ -397,7 +527,6 @@
     }
 
     words.forEach(item => {
-      // 정답률 계산
       const tested = item.testedCount || 0;
       const correct = item.correctCount || 0;
       const rate = tested > 0 ? Math.round((correct / tested) * 100) : 0;
@@ -430,7 +559,7 @@
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   }
 
-  // 시험 시작 준비 (단어 랜덤 섞기)
+  // 시험 시작 준비
   function startTest() {
     const container = document.getElementById('test-container');
     
@@ -478,7 +607,7 @@
     document.getElementById('answer-input').focus();
   }
 
-  // 정답 확인 함수 및 정답률 누적 업데이트
+  // 정답 확인 함수
   function checkAnswer(e, wordId, correctAnswer) {
     e.preventDefault();
     const inputElement = document.getElementById('answer-input');
@@ -487,7 +616,6 @@
 
     const isCorrect = (userAnswer === correctAnswer);
 
-    // 단어 데이터 기록 업데이트
     words = words.map(item => {
       if (item.id === wordId) {
         return {
@@ -499,7 +627,7 @@
       return item;
     });
 
-    saveWords(); // 누적된 기록 저장
+    saveWords();
 
     if (isCorrect) {
       resultMsg.className = 'result-message correct';
