@@ -3,9 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>나만의 단어장 & 단어 시험</title>
-  <!-- 엑셀 파일(.xlsx)을 읽기 위한 SheetJS 라이브러리 -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <title>나만의 단어장 (구글 스프레드시트 연동)</title>
   <style>
     * {
       box-sizing: border-box;
@@ -32,6 +30,12 @@
       text-align: center;
       margin-bottom: 20px;
       color: #2c3e50;
+    }
+    .sync-status {
+      text-align: right;
+      font-size: 12px;
+      color: #7f8c8d;
+      margin-bottom: 10px;
     }
     .nav-buttons {
       display: flex;
@@ -257,6 +261,7 @@
 
 <div class="container">
   <h1>나만의 단어장</h1>
+  <div id="sync-status" class="sync-status">스프레드시트 동기화 중...</div>
 
   <div class="nav-buttons">
     <button id="tab-manage-btn" class="active" onclick="switchTab('manage')">단어 관리</button>
@@ -289,7 +294,9 @@
 </div>
 
 <script>
-  // 엑셀에서 로드될 사전 데이터 변수
+  // 전달해주신 게시 주소가 적용되었습니다.
+  const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ7aHvetHCCbJy5_SKJDE5dWoQdRk-NdK68M3hhcuKeTJvLvut6nABqHUvOe6eqQqVf9YicaVTPEOMa/pub?output=csv";
+
   let dictionaryData = [];
 
   let words = (JSON.parse(localStorage.getItem('myWords')) || []).map(item => ({
@@ -303,37 +310,45 @@
   let currentQuizIndex = 0;
 
   window.addEventListener('DOMContentLoaded', () => {
-    loadExcelData();
+    loadGoogleSheetData();
     renderWordList();
   });
 
-  // words.xlsx 파일 읽어오기
-  async function loadExcelData() {
+  async function loadGoogleSheetData() {
+    const statusEl = document.getElementById('sync-status');
+
     try {
-      const response = await fetch('words.xlsx');
-      const arrayBuffer = await response.arrayBuffer();
-      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const response = await fetch(GOOGLE_SHEET_CSV_URL);
+      const csvText = await response.text();
       
-      // 첫 번째 시트 가져오기
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      
-      // 시트 데이터를 JSON 배열로 변환
-      const rawData = XLSX.utils.sheet_to_json(worksheet);
-      
-      // 기존 구조에 맞게 변환 (kor 뜻을 쉼표 단위로 배열화)
-      dictionaryData = rawData.map(row => {
-        const korStr = String(row.kor || '');
-        const korArray = korStr.split(',').map(s => s.trim()).filter(Boolean);
-        return {
-          eng: String(row.eng || '').trim(),
-          kor: korArray
-        };
-      });
-      console.log('엑셀 단어 로드 완료:', dictionaryData.length, '개');
+      dictionaryData = parseCSV(csvText);
+      statusEl.textContent = `🟢 스프레드시트 연결됨 (${dictionaryData.length}개 단어)`;
     } catch (err) {
-      console.error('words.xlsx 파일을 불러오지 못했습니다. 파일 위치나 오타를 확인하세요.', err);
+      console.error('스프레드시트 로드 실패:', err);
+      statusEl.textContent = "🔴 스프레드시트 연동 실패";
     }
+  }
+
+  function parseCSV(text) {
+    const lines = text.split(/\r\n|\n/);
+    const result = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      const parts = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || line.split(',');
+      if (parts.length >= 2) {
+        const eng = parts[0].replace(/^"|"$/g, '').trim();
+        const korRaw = parts[1].replace(/^"|"$/g, '').trim();
+        const korArray = korRaw.split(',').map(s => s.trim()).filter(Boolean);
+
+        if (eng) {
+          result.push({ eng: eng, kor: korArray });
+        }
+      }
+    }
+    return result;
   }
 
   document.addEventListener('click', function(e) {
